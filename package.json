@@ -23,6 +23,10 @@
     "type": "git",
     "url": "git+https://github.com/jtrujilloaui/agent-kickoff.git"
   },
+  "homepage": "https://github.com/jtrujilloaui/agent-kickoff#readme",
+  "bugs": {
+    "url": "https://github.com/jtrujilloaui/agent-kickoff/issues"
+  },
   "devDependencies": {
     "@clack/prompts": "^1.8.1",
     "@types/bun": "^1.4.2",
