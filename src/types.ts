@@ -76,14 +76,24 @@ export interface RepoFacts {
 
 export type TeamShape = "solo" | "small" | "multi-squad";
 export type Tracker = "linear" | "github" | "none";
-export type GenerateKey = "context" | "instructions" | "agents" | "linear" | "design";
+export type GenerateKey = "context" | "instructions" | "agents";
+
+/** How the developer works with agents; drives skill and section presets. */
+export type WorkMode = "single" | "subagents" | "multi";
+
+/** Sections of the generated AGENTS.md the user can toggle. */
+export type SectionKey = "routing" | "workflow" | "ui" | "backend" | "verify" | "pr" | "tracker" | "git";
 
 export interface Answers {
   teamShape: TeamShape;
+  workMode: WorkMode;
   tracker: Tracker;
   linear?: { teamName: string; teamKey: string };
   humanReview: boolean;
   generate: GenerateKey[];
+  sections: SectionKey[];
+  /** Ids from SKILL_CATALOG (src/catalog.ts). */
+  skills: string[];
   enrich: boolean;
   issueLanguage: string;
 }

@@ -9,7 +9,12 @@ bunx agent-kickoff        # or: npx agent-kickoff
 ## What it does
 
 1. **Scans** the repo, with no questions and nothing executed: the package manager, frameworks and versions, scripts, folder structure, routes, data models, env variable *names*, the design system, tests, CI, git conventions and existing instruction files.
-2. **Asks** only what it can't infer: the team shape, where issues live, whether PRs get reviewed, and what to generate.
+2. **Asks** only what it can't infer:
+   - the team shape;
+   - **how you work with agents**: one session, subagents by tier, or several agents in parallel;
+   - where issues live and whether PRs get reviewed;
+   - which `AGENTS.md` sections to include;
+   - **which skills to install** (multi-select, with presets for your work mode).
 3. **Writes**:
 
 | File | What it holds |
@@ -20,7 +25,13 @@ bunx agent-kickoff        # or: npx agent-kickoff
 | `.claude/agents/{architect,builder,mechanic}.md` | Subagents routed by complexity (opus / sonnet / haiku) |
 | `.claude/skills/linear-*` + `issue-authoring` | Linear planning, sync, project health and issue writing, configured for your team (only if you use Linear) |
 
-4. **Goes deeper with Claude** (optional, when the `claude` CLI is installed): Claude reads the code with read-only tools and returns `architecture.md`, `flows.md` and `gotchas.md` for the context skill.
+4. **Installs skills into the repo** from their authors' own repos, with the [`skills`](https://www.npmjs.com/package/skills) CLI. They are copied into `.claude/skills/` (Claude Code) and `.agents/skills/` (Codex, Cursor), and a `skills-lock.json` lets the team restore them:
+   - **Planning and execution** by [obra/superpowers](https://github.com/obra/superpowers) (Jesse Vincent): `brainstorming`, `writing-plans`, `executing-plans`, `subagent-driven-development`, `dispatching-parallel-agents`, `test-driven-development`, `systematic-debugging`, `verification-before-completion`, code review and worktrees.
+   - **Design**, when the repo has a frontend: skills by Jakub Krehel, Raphael Salaja, 0xdesign and Emil Kowalski.
+   - **Linear**, generated and configured for your team.
+
+   `AGENTS.md` gets a **Workflow** section that chains the installed skills: idea → `brainstorming` → `writing-plans` → execution → verification → review → finish.
+5. **Goes deeper with Claude** (optional, when the `claude` CLI is installed): Claude reads the code with read-only tools and returns `architecture.md`, `flows.md` and `gotchas.md` for the context skill.
 
 ## Safe to re-run
 

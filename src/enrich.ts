@@ -170,7 +170,7 @@ export function runEnrich(
   // npm-installed `claude.cmd` shims need a shell on Windows; the prompt goes
   // over stdin, so no argument ever carries user text through that shell.
   const shell = /\.(cmd|bat)$/i.test(o.command);
-  const child = spawn(shell ? quote(o.command) : o.command, shell ? args.map(quote) : args, {
+  const child = spawn(shell ? [o.command, ...args].map(quote).join(" ") : o.command, shell ? [] : args, {
     cwd: root,
     env: o.env ?? process.env,
     shell,

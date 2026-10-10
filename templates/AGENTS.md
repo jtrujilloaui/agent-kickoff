@@ -18,10 +18,14 @@ Repo knowledge base: read the `{{SLUG}}-context` skill (`.claude/skills/{{SLUG}}
 Read the other repo's instruction file before changing code there.
 <!-- END IF -->
 
+<!-- IF ROUTING -->
 ## Plan first, route by complexity
 
 Plan before executing when the task touches 3+ files, a schema or migration, or security-sensitive code, or when the right approach is not obvious. Skip planning for trivial one-file edits, read-only questions, or when the exact change is already specified.
 
+{{WORK_MODE_NOTE}}
+
+<!-- IF AGENTS -->
 Route work to the subagent that fits (defined in `.claude/agents/`):
 
 | Tier | Use when | Agent |
@@ -31,8 +35,20 @@ Route work to the subagent that fits (defined in `.claude/agents/`):
 | High-stakes or ambiguous | Architecture, data model, unknown-cause debugging, security review, cross-cutting refactors | `architect` (opus) |
 
 Default to the cheapest tier that can succeed; escalate if the result comes back shallow or wrong. Never route ambiguous, high-stakes or security-sensitive work down to a cheap tier.
+<!-- END IF -->
+<!-- END IF -->
 
-<!-- IF FRONTEND -->
+<!-- IF WORKFLOW -->
+## Workflow
+
+{{WORKFLOW_STEPS}}
+
+### Skills in this repo
+
+{{SKILLS_LIST}}
+<!-- END IF -->
+
+<!-- IF UI -->
 ## UI work: mandatory gate
 
 Applies to any change to how something looks or feels. One padding value, one hover state or a full page: no size threshold.
@@ -68,6 +84,7 @@ Applies to any change to the backend or the database, from a one-line fix to a n
 Reporting: say which checks applied and paste the lint/test/build result. If a step was skipped (no database, no token), say which and why; do not report it as done.
 <!-- END IF -->
 
+<!-- IF TRACKER -->
 <!-- IF LINEAR -->
 ## Issue tracking (Linear)
 
@@ -81,13 +98,29 @@ Reporting: say which checks applied and paste the lint/test/build result. If a s
 
 - Reference issues as `#NNN` in commits and PRs. Use `gh issue view` to read an issue before implementing it, and ground it in the real code first.
 <!-- END IF -->
+<!-- END IF -->
 
+<!-- IF VERIFY -->
 ## Verify before claiming done
 
 Run {{CHECK_COMMANDS}} and fix what breaks. Say which checks ran and their results; if one was skipped, say why.
+<!-- END IF -->
 
-<!-- IF HUMAN_REVIEW -->
+<!-- IF PR -->
 ## Pull requests
 
+<!-- IF HUMAN_REVIEW -->
 PRs are reviewed by a human before merge. Body: what changed, linked issue, whether there is a migration or new environment variable, and which tests or manual checks were run.
+<!-- ELSE -->
+PRs may merge without a human review, so self-review first. Before opening one: read your own diff end to end, confirm the checks pass, and confirm nothing unrelated slipped in. Body: what changed, linked issue, whether there is a migration or new environment variable, and which tests or manual checks were run.
+<!-- END IF -->
+<!-- END IF -->
+
+<!-- IF GIT -->
+## Git and worktrees
+
+- Branch from `{{DEFAULT_BRANCH}}` with a `feat/` or `fix/` prefix.
+- One worktree per parallel task, so tasks never share a working directory.
+- Before removing a worktree, run `git status`. If it is dirty, run `git stash push -u` first, then `git worktree remove`.
+- Flag any worktree whose last commit is older than ~2 weeks as stale, and ask before deleting it.
 <!-- END IF -->

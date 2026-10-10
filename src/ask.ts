@@ -1,32 +1,36 @@
 import * as p from "@clack/prompts";
-import type { Answers, GenerateKey, RepoFacts, SavedAnswers, TeamShape, Tracker } from "./types";
+import { GROUP_LABELS, SECTION_LABELS, offeredSections, offeredSkills, presetSections, presetSkills, type SkillGroup } from "./catalog";
+import type { Answers, GenerateKey, RepoFacts, SavedAnswers, SectionKey, TeamShape, Tracker, WorkMode } from "./types";
 
 export const GENERATE_LABELS: Record<GenerateKey, string> = {
   context: "Context skill (stack, commands, structure, data, conventions)",
   instructions: "AGENTS.md + CLAUDE.md (plan-first, quality gates)",
   agents: "Subagents: architect · builder · mechanic",
-  linear: "Linear skills: planning, sync, project health, issue authoring",
-  design: "Design skills (install commands from their authors' repos)",
 };
 
-/** What can be generated for this repo with this tracker, in display order. */
-export function availableGenerate(f: RepoFacts, tracker: Tracker): GenerateKey[] {
-  const keys: GenerateKey[] = ["context", "instructions", "agents"];
-  if (tracker === "linear") keys.push("linear");
-  if (f.hasFrontend) keys.push("design");
-  return keys;
-}
+export const WORK_MODE_LABELS: Record<WorkMode, string> = {
+  single: "One session",
+  subagents: "Subagents by tier",
+  multi: "Multi-agent, in parallel",
+};
+
+export const GENERATE_KEYS: GenerateKey[] = ["context", "instructions", "agents"];
 
 /** Answers for `--yes` (and for "reuse the saved answers"), no prompts. */
-export function defaultAnswers(f: RepoFacts, saved?: SavedAnswers, opts: { enrich?: boolean } = {}): Answers {
+export function defaultAnswers(f: RepoFacts, saved?: Partial<SavedAnswers>, opts: { enrich?: boolean } = {}): Answers {
   const tracker = saved?.tracker ?? "none";
-  const allowed = availableGenerate(f, tracker);
+  const workMode = saved?.workMode ?? "subagents";
+  const offeredS = offeredSections(f, tracker);
+  const offeredK = offeredSkills(f, tracker).map((s) => s.id);
   return {
     teamShape: saved?.teamShape ?? "solo",
+    workMode,
     tracker,
     linear: tracker === "linear" ? saved?.linear : undefined,
     humanReview: saved?.humanReview ?? false,
-    generate: (saved?.generate ?? allowed).filter((g) => allowed.includes(g)),
+    generate: saved?.generate ? saved.generate.filter((g) => GENERATE_KEYS.includes(g)) : [...GENERATE_KEYS],
+    sections: saved?.sections ? saved.sections.filter((k) => offeredS.includes(k)) : presetSections(f, tracker, workMode),
+    skills: saved?.skills ? saved.skills.filter((k) => offeredK.includes(k)) : presetSkills(f, tracker, workMode),
     enrich: opts.enrich ?? false,
     issueLanguage: saved?.issueLanguage ?? "English",
   };
@@ -54,7 +58,7 @@ async function askEnrich(claudeAvailable: boolean, forced?: boolean): Promise<bo
 
 export async function askAnswers(
   f: RepoFacts,
-  saved: SavedAnswers | undefined,
+  saved: Partial<SavedAnswers> | undefined,
   o: { claudeAvailable: boolean; enrich?: boolean },
 ): Promise<Answers> {
   if (saved) {
@@ -80,6 +84,18 @@ export async function askAnswers(
         { value: "solo", label: "Solo", hint: "just you" },
         { value: "small", label: "Small team", hint: "2–8 people, one squad" },
         { value: "multi-squad", label: "Several squads" },
+      ],
+    }),
+  );
+
+  const workMode = bail(
+    await p.select<WorkMode>({
+      message: "How do you work with agents?",
+      initialValue: saved?.workMode ?? "subagents",
+      options: [
+        { value: "single", label: WORK_MODE_LABELS.single, hint: "you and one agent: plan, then execute" },
+        { value: "subagents", label: WORK_MODE_LABELS.subagents, hint: "architect · builder · mechanic, one task each" },
+        { value: "multi", label: WORK_MODE_LABELS.multi, hint: "parallel agents in separate worktrees" },
       ],
     }),
   );
@@ -121,22 +137,51 @@ export async function askAnswers(
     await p.confirm({ message: "Does a person review PRs before they merge?", initialValue: saved?.humanReview ?? false }),
   );
 
-  const options = availableGenerate(f, tracker).map((value) => ({ value, label: GENERATE_LABELS[value] }));
+  const options = GENERATE_KEYS.map((value) => ({ value, label: GENERATE_LABELS[value] }));
   const generate = bail(
     await p.multiselect<GenerateKey>({
       message: "What should I generate?",
       options,
-      initialValues: options.map((o) => o.value),
+      initialValues: workMode === "single" ? ["context", "instructions"] : GENERATE_KEYS,
       required: true,
+    }),
+  );
+
+  let sections: SectionKey[] = [];
+  if (generate.includes("instructions")) {
+    sections = bail(
+      await p.multiselect<SectionKey>({
+        message: "Which sections go in AGENTS.md?",
+        options: offeredSections(f, tracker).map((value) => ({ value, label: SECTION_LABELS[value] })),
+        initialValues: presetSections(f, tracker, workMode),
+        required: false,
+      }),
+    );
+  }
+
+  const groups: Record<string, { value: string; label: string; hint: string }[]> = {};
+  for (const s of offeredSkills(f, tracker)) {
+    const hint = s.source.kind === "external" ? `${s.hint} · ${s.source.author}` : s.hint;
+    (groups[GROUP_LABELS[s.group as SkillGroup]] ??= []).push({ value: s.id, label: s.id, hint });
+  }
+  const skills = bail(
+    await p.groupMultiselect<string>({
+      message: "Which skills should I install?",
+      options: groups,
+      initialValues: presetSkills(f, tracker, workMode),
+      required: false,
     }),
   );
 
   return {
     teamShape,
+    workMode,
     tracker,
     linear,
     humanReview,
     generate,
+    sections,
+    skills,
     enrich: await askEnrich(o.claudeAvailable, o.enrich),
     issueLanguage: saved?.issueLanguage ?? "English",
   };

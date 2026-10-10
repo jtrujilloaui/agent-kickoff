@@ -1,24 +1,15 @@
 import { describe, expect, test } from "bun:test";
-import type { Answers } from "../src/types";
-import { planFiles } from "../src/plan";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import type { SectionKey, WorkMode } from "../src/types";
+import { loadSaved, planFiles, savedStatePath } from "../src/plan";
 import { contextSkill } from "../src/plan/context";
 import { render } from "../src/plan/render";
 import { loadTemplates } from "../src/plan/templates";
 import { templateFlags, templateVars } from "../src/plan/vars";
+import { answers, ALL_SECTIONS } from "./helpers/answers";
 import { apiFacts, nextFacts } from "./helpers/facts";
-
-function answers(over: Partial<Answers> = {}): Answers {
-  return {
-    teamShape: "small",
-    tracker: "linear",
-    linear: { teamName: "Web", teamKey: "WEB" },
-    humanReview: true,
-    generate: ["context", "instructions", "agents", "linear", "design"],
-    enrich: false,
-    issueLanguage: "English",
-    ...over,
-  };
-}
 
 describe("render", () => {
   test("substitutes variables", () => {
@@ -64,6 +55,14 @@ const FLAGS = [
   "DESIGN_SYSTEM",
   "BACKEND",
   "HUMAN_REVIEW",
+  "ROUTING",
+  "WORKFLOW",
+  "UI",
+  "VERIFY",
+  "PR",
+  "TRACKER",
+  "GIT",
+  "AGENTS",
 ];
 
 describe("templates", () => {
@@ -175,11 +174,146 @@ describe("planFiles", () => {
   });
 });
 
+const HEADINGS: Record<SectionKey, string> = {
+  routing: "## Plan first",
+  workflow: "## Workflow",
+  ui: "## UI work",
+  backend: "## Backend work",
+  verify: "## Verify before",
+  pr: "## Pull requests",
+  tracker: "## Issue tracking",
+  git: "## Git and worktrees",
+};
+
+const agentsMd = (facts: ReturnType<typeof nextFacts>, over: Parameters<typeof answers>[0]) =>
+  planFiles({ facts, answers: answers(over), templates, version: "0", date: "2026-10-09" }).find(
+    (p) => p.path === "AGENTS.md",
+  )!.content;
+
+describe("sections and work modes", () => {
+  const modes: WorkMode[] = ["single", "subagents", "multi"];
+
+  test("every section subset and work mode renders cleanly", () => {
+    for (const workMode of modes) {
+      for (let mask = 0; mask < 1 << ALL_SECTIONS.length; mask++) {
+        const sections = ALL_SECTIONS.filter((_, i) => mask & (1 << i));
+        for (const facts of [nextFacts(), apiFacts()]) {
+          const out = agentsMd(facts, { workMode, sections });
+          expect(out.includes("{{"), `${workMode} ${mask}`).toBe(false);
+        }
+      }
+    }
+  });
+
+  test("omitted sections are absent, selected ones present", () => {
+    const facts = { ...nextFacts(), hasBackend: true };
+    for (const key of ALL_SECTIONS) {
+      const without = agentsMd(facts, { sections: ALL_SECTIONS.filter((k) => k !== key) });
+      expect(without, key).not.toContain(HEADINGS[key]);
+      const only = agentsMd(facts, { sections: [key] });
+      expect(only, key).toContain(HEADINGS[key]);
+    }
+    const none = agentsMd(nextFacts(), { sections: [] });
+    for (const h of Object.values(HEADINGS)) expect(none).not.toContain(h);
+    expect(none).toContain("## Stack and commands");
+  });
+
+  test("tier table only when agents are generated", () => {
+    expect(agentsMd(nextFacts(), {})).toContain("| Tier |");
+    const out = agentsMd(nextFacts(), { generate: ["context", "instructions"] });
+    expect(out).not.toContain("| Tier |");
+    expect(out).toContain("to subagents;");
+  });
+
+  test("workflow steps differ for single and multi", () => {
+    const single = agentsMd(nextFacts(), { workMode: "single" });
+    expect(single).toContain("`executing-plans`");
+    expect(single).not.toContain("Execute: `subagent-driven-development`");
+    expect(single).not.toContain("Parallel work");
+    const multi = agentsMd(nextFacts(), { workMode: "multi" });
+    expect(multi).toContain("Execute: `subagent-driven-development`");
+    expect(multi).toContain("Parallel work: `dispatching-parallel-agents`");
+    expect(multi).toContain("each in its own git worktree (`using-git-worktrees`)");
+  });
+
+  test("notes only name installed skills", () => {
+    const out = agentsMd(nextFacts(), { workMode: "multi", skills: [] });
+    expect(out).toContain("No workflow skills installed");
+    expect(out).toContain("None yet.");
+    expect(out).not.toContain("subagent-driven-development");
+    expect(out).toContain("run one fresh subagent per task and review");
+  });
+
+  test("skills list credits authors; generated skills have none", () => {
+    const out = agentsMd(nextFacts(), {});
+    expect(out).toContain("(by Jesse Vincent)");
+    expect(out).toContain("- `linear-sync`: issue status in sync while coding\n");
+  });
+
+  test("a deselected linear skill is not generated", () => {
+    const skills = answers().skills.filter((s) => s !== "linear-sync");
+    const files = planFiles({
+      facts: nextFacts(),
+      answers: answers({ skills }),
+      templates,
+      version: "0",
+      date: "2026-10-09",
+    });
+    expect(files.some((p) => p.path.includes("linear-sync"))).toBe(false);
+    expect(files.some((p) => p.path.includes("linear-planning"))).toBe(true);
+  });
+
+  test("self-review PR text without human review", () => {
+    expect(agentsMd(nextFacts(), { humanReview: false })).toContain("self-review");
+  });
+});
+
+describe("loadSaved", () => {
+  test("accepts a v0.1 file", async () => {
+    const root = mkdtempSync(join(tmpdir(), "kickoff-saved-"));
+    try {
+      const path = join(root, savedStatePath);
+      mkdirSync(dirname(path), { recursive: true });
+      writeFileSync(
+        path,
+        JSON.stringify({
+          version: "0.1.0",
+          answers: {
+            teamShape: "solo",
+            tracker: "linear",
+            linear: { teamName: "Web", teamKey: "WEB" },
+            humanReview: false,
+            generate: ["context", "instructions", "agents", "linear", "design"],
+            issueLanguage: "English",
+          },
+        }),
+      );
+      const saved = await loadSaved(root);
+      expect(saved?.workMode).toBe("subagents");
+      expect(saved?.generate).toEqual(["context", "instructions", "agents"]);
+      expect(saved?.sections).toBeUndefined();
+      expect(saved?.skills).toBeUndefined();
+      expect(saved?.linear).toEqual({ teamName: "Web", teamKey: "WEB" });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("contextSkill", () => {
   test("lists enrich files only when enriched", () => {
     expect(contextSkill(nextFacts(), [], "2026-10-09")).not.toContain("architecture.md");
     expect(contextSkill(nextFacts(), ["architecture.md"], "2026-10-09")).toContain(
       "architecture.md",
     );
+  });
+  test("agent setup section is optional", () => {
+    expect(contextSkill(nextFacts(), [], "2026-10-09")).not.toContain("## Agent setup");
+    const out = contextSkill(nextFacts(), [], "2026-10-09", {
+      workMode: "multi",
+      skills: ["brainstorming", "writing-plans"],
+    });
+    expect(out).toContain("Work mode: multi.");
+    expect(out).toContain("Installed skills: brainstorming, writing-plans.");
   });
 });

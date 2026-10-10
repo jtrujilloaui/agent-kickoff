@@ -1,6 +1,17 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { Answers, FilePlan, RepoFacts, SavedAnswers } from "../types";
+import { SECTION_LABELS } from "../catalog";
+import type {
+  Answers,
+  FilePlan,
+  GenerateKey,
+  RepoFacts,
+  SavedAnswers,
+  SectionKey,
+  TeamShape,
+  Tracker,
+  WorkMode,
+} from "../types";
 import {
   commandsMd,
   contextSkill,
@@ -37,7 +48,7 @@ export function planFiles(i: PlanInput): FilePlan[] {
 
   if (a.generate.includes("context")) {
     const base = `.claude/skills/${f.slug}-context`;
-    owned(`${base}/SKILL.md`, contextSkill(f, i.enriched ?? [], date));
+    owned(`${base}/SKILL.md`, contextSkill(f, i.enriched ?? [], date, { workMode: a.workMode, skills: a.skills }));
     owned(`${base}/references/stack.md`, stackMd(f));
     owned(`${base}/references/commands.md`, commandsMd(f));
     owned(`${base}/references/structure.md`, structureMd(f));
@@ -56,8 +67,8 @@ export function planFiles(i: PlanInput): FilePlan[] {
     }
   }
 
-  if (a.generate.includes("linear") && a.tracker === "linear") {
-    for (const name of LINEAR_SKILLS) {
+  if (a.tracker === "linear") {
+    for (const name of LINEAR_SKILLS.filter((n) => a.skills.includes(n))) {
       owned(`.claude/skills/${name}/SKILL.md`, render(t.linear[name], vars, flags));
     }
   }
@@ -71,7 +82,15 @@ export function planFiles(i: PlanInput): FilePlan[] {
   return plans;
 }
 
-export async function loadSaved(root: string): Promise<SavedAnswers | undefined> {
+export type LoadedSaved = Partial<SavedAnswers>;
+
+const GENERATE_KEYS: GenerateKey[] = ["context", "instructions", "agents"];
+const WORK_MODES: WorkMode[] = ["single", "subagents", "multi"];
+const strings = (v: unknown): string[] | undefined =>
+  Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : undefined;
+
+/** Reads saved answers, accepting v0.1 files (no workMode/sections/skills) and dropping retired keys. */
+export async function loadSaved(root: string): Promise<LoadedSaved | undefined> {
   try {
     const raw = JSON.parse(await readFile(join(root, savedStatePath), "utf8"));
     const x = raw?.answers;
@@ -83,7 +102,24 @@ export async function loadSaved(root: string): Promise<SavedAnswers | undefined>
     ) {
       return undefined;
     }
-    return x as SavedAnswers;
+    const out: LoadedSaved = {
+      teamShape: x.teamShape as TeamShape,
+      tracker: x.tracker as Tracker,
+      workMode: WORK_MODES.includes(x.workMode) ? x.workMode : "subagents",
+      generate: (x.generate as unknown[]).filter((k): k is GenerateKey =>
+        GENERATE_KEYS.includes(k as GenerateKey),
+      ),
+    };
+    if (typeof x.humanReview === "boolean") out.humanReview = x.humanReview;
+    if (typeof x.issueLanguage === "string") out.issueLanguage = x.issueLanguage;
+    if (typeof x.linear?.teamName === "string" && typeof x.linear?.teamKey === "string") {
+      out.linear = { teamName: x.linear.teamName, teamKey: x.linear.teamKey };
+    }
+    const sections = strings(x.sections)?.filter((k): k is SectionKey => k in SECTION_LABELS);
+    if (sections) out.sections = sections;
+    const skills = strings(x.skills);
+    if (skills) out.skills = skills;
+    return out;
   } catch {
     return undefined;
   }
