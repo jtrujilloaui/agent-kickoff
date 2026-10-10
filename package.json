@@ -1,6 +1,6 @@
 {
   "name": "agent-kickoff",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Scan a repo and set up a full agent environment: a context skill, AGENTS.md, CLAUDE.md, subagents, planning and execution skills (superpowers), design and Linear skills.",
   "type": "module",
   "bin": {

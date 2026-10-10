@@ -3,7 +3,7 @@
 Run it in any repo. It scans the project and leaves behind a knowledge base for coding agents (Claude Code, Codex, Cursor, Copilot): what the stack is, how to run it, where things live, and the rules to follow.
 
 ```sh
-bunx agent-kickoff        # or: npx agent-kickoff
+npx agent-kickoff         # or, with Bun: bunx agent-kickoff
 ```
 
 ## What it does

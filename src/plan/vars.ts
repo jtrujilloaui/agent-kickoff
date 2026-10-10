@@ -149,5 +149,5 @@ export function skillsList(a: Answers): string {
     );
     if (rows.length) blocks.push(`**${GROUP_LABELS[group]}**\n\n${rows.join("\n")}`);
   }
-  return blocks.length ? blocks.join("\n\n") : "- None yet. Re-run `bunx agent-kickoff` to add some.";
+  return blocks.length ? blocks.join("\n\n") : "- None yet. Re-run `npx agent-kickoff` to add some.";
 }
