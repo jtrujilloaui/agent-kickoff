@@ -1,0 +1,1 @@
+{"name":"@acme/api","scripts":{"build":"nest build","start:dev":"nest start --watch","test":"jest","lint":"eslint ."},"dependencies":{"@nestjs/core":"^11.0.0","@nestjs/common":"^11.0.0","@prisma/client":"^6.0.0"},"devDependencies":{"prisma":"^6.0.0","jest":"^30.0.0","typescript":"^5.9.0"}}

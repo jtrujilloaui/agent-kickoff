@@ -90,7 +90,7 @@ Answers are saved to `.claude/agent-kickoff.json` (no secrets in it) along with 
 
 ### 3. `plan/` → `FilePlan[]` and `write/`
 
-`plan` is pure: `(facts, answers) => FilePlan[]` where a `FilePlan` is `{ path, content, mode: "create" | "managed" | "skip-exists" }`. Templates live in `templates/` inside the package and are rendered by a ~40-line renderer supporting `{{VAR}}` and `<!-- IF FLAG -->…<!-- ELSE -->…<!-- END IF -->`. The agent, Linear and instruction templates are ported from the `project-kickoff` skill in `jesus-portfolio/public/skill-files/`. From here on, the package is their source of truth.
+`plan` is pure: `(facts, answers) => FilePlan[]` where a `FilePlan` is `{ path, content, mode: "owned" | "managed" | "state" }`. `owned` is a marked file the tool owns, `managed` is `AGENTS.md`/`CLAUDE.md` (append allowed), and `state` is the JSON answers file, which is always overwritten. Templates live in `templates/` inside the package and are rendered by a ~40-line renderer supporting `{{VAR}}` and `<!-- IF FLAG -->…<!-- ELSE -->…<!-- END IF -->`. The agent, Linear and instruction templates are ported from the `project-kickoff` skill in `jesus-portfolio/public/skill-files/`. From here on, the package is their source of truth.
 
 Generated files:
 

@@ -1,0 +1,233 @@
+import { spawnSync } from "node:child_process";
+import { execFile } from "node:child_process";
+import { stat } from "node:fs/promises";
+import { basename, resolve } from "node:path";
+import { promisify } from "node:util";
+import * as p from "@clack/prompts";
+import pkg from "../package.json";
+import { HELP, parseCli } from "./args";
+import { askAnswers, defaultAnswers } from "./ask";
+import { DESIGN_SKILLS } from "./design-skills";
+import { findClaude, runEnrich } from "./enrich";
+import { loadSaved, planFiles } from "./plan";
+import { loadTemplates } from "./plan/templates";
+import { scan } from "./scan";
+import type { Answers, RepoFacts, WriteResult } from "./types";
+import {
+  AMBER,
+  BLUE,
+  LiveLine,
+  MUTED,
+  Rail,
+  SOFT,
+  VIOLET,
+  box,
+  detectCaps,
+  gradientText,
+  installCursorGuard,
+  paint,
+  playLogo,
+  printStaggered,
+  shimmer,
+  spinner,
+  treeLines,
+  truncate,
+  type TermCaps,
+} from "./ui";
+import { applyPlan } from "./write";
+
+const run = promisify(execFile);
+const out = process.stdout;
+
+/** Explicit dir as given; otherwise the git root of the cwd, else the cwd. */
+async function resolveRoot(dir?: string): Promise<string> {
+  if (dir) {
+    const abs = resolve(dir);
+    const s = await stat(abs).catch(() => undefined);
+    if (!s?.isDirectory()) throw new Error(`Not a directory: ${abs}`);
+    return abs;
+  }
+  try {
+    const { stdout } = await run("git", ["rev-parse", "--show-toplevel"], { timeout: 3000 });
+    if (stdout.trim()) return resolve(stdout.trim());
+  } catch {
+    // not a git repo; fall through
+  }
+  return process.cwd();
+}
+
+const elapsed = (since: number) => {
+  const s = Math.floor((Date.now() - since) / 1000);
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+};
+
+async function scanWithRail(root: string, caps: TermCaps): Promise<RepoFacts> {
+  const rail = new Rail(out, caps);
+  const running = new Map<string, string>();
+  // Scanning starts now and runs underneath the logo animation.
+  const scanning = scan(root, (e) => {
+    if (e.type === "start") running.set(e.id, e.label);
+    else {
+      running.delete(e.id);
+      const detail = e.type === "warn" ? e.message : (e.summary ?? "—");
+      rail.done(`${paint(e.label.padEnd(11), SOFT, caps)} ${detail}`, e.type !== "warn");
+    }
+    rail.setActive(running.values().next().value ?? "");
+  });
+  await playLogo(out, caps);
+  rail.header(`Scanning ${paint(basename(root), SOFT, caps)}`);
+  rail.start();
+  const facts = await scanning;
+  await rail.finish();
+  return facts;
+}
+
+async function enrichWithTicker(root: string, facts: RepoFacts, claude: string, caps: TermCaps): Promise<string[]> {
+  out.write(`\n  ${paint("◆", VIOLET, caps)} Deep analysis with Claude ${paint("(read-only)", MUTED, caps)}\n`);
+  const started = Date.now();
+  let action = "Starting Claude";
+  let wrote = 0;
+  const line = new LiveLine(out, caps, (f) => {
+    const meta = `${elapsed(started)} · ${wrote} files`;
+    const text = truncate(action, Math.max(10, caps.columns - meta.length - 10));
+    return `  ${paint("│", MUTED, caps)} ${paint(spinner(f), VIOLET, caps)} ${shimmer(text, caps, f)}  ${paint(meta, MUTED, caps)}`;
+  });
+  line.start();
+  const { done } = runEnrich(
+    root,
+    facts,
+    (e) => {
+      if (e.type === "tool") {
+        action = e.label;
+        if (!caps.motion) line.print(`  │ ${truncate(e.label, caps.columns - 6)}`);
+      } else if (e.type === "wrote") {
+        wrote++;
+        action = `Writing ${e.path}`;
+      }
+    },
+    { command: claude },
+  );
+  const r = await done;
+  line.stop(
+    r.ok
+      ? `  ${paint("└", MUTED, caps)} ${paint("✔", BLUE, caps)} Claude wrote ${r.written.join(", ")} in ${elapsed(started)}`
+      : `  ${paint("└", MUTED, caps)} ${paint("!", AMBER, caps)} Deep analysis skipped: ${r.message}. The base knowledge base is intact.`,
+  );
+  return r.written;
+}
+
+async function report(
+  root: string,
+  facts: RepoFacts,
+  answers: Answers,
+  results: WriteResult[],
+  enriched: string[],
+  opts: { dryRun: boolean; interactive: boolean },
+  caps: TermCaps,
+) {
+  const items = [
+    ...results.map((r) => ({ path: r.writtenPath, tag: r.action })),
+    ...enriched.map((n) => ({ path: `.claude/skills/${facts.slug}-context/references/${n}`, tag: "claude" })),
+  ];
+  out.write(`\n  ${paint("◆", VIOLET, caps)} ${opts.dryRun ? "Would write" : "Wrote"}\n\n`);
+  await printStaggered(out, treeLines(items, caps), caps);
+
+  const count = (a: string) => results.filter((r) => r.action === a).length;
+  const summary = [
+    ["new", count("new")],
+    ["updated", count("update")],
+    ["appended", count("append")],
+    ["unchanged", count("unchanged")],
+    [".new copies", count(".new")],
+  ]
+    .filter(([, n]) => n)
+    .map(([k, n]) => `${n} ${k}`)
+    .join(" · ");
+  const lines = [
+    gradientText(opts.dryRun ? "✦ dry run: nothing was written" : "✦ knowledge base ready", caps),
+    "",
+    summary || "nothing to do",
+    `Open Claude Code in ${basename(root)}: it reads AGENTS.md and the ${facts.slug}-context skill.`,
+  ];
+  if (count(".new")) lines.push("Some files existed without agent-kickoff markers: review the .new copies.");
+  out.write("\n" + box(lines, caps).join("\n") + "\n");
+
+  if (answers.generate.includes("design")) {
+    out.write(`\n  ${paint("◆", VIOLET, caps)} Design skills ${paint("(from their authors' repos)", MUTED, caps)}\n`);
+    for (const s of DESIGN_SKILLS) out.write(`  ${paint("│", MUTED, caps)} ${paint("$", MUTED, caps)} ${s.command}\n`);
+    if (opts.interactive && !opts.dryRun) {
+      const install = await p.confirm({ message: "Install them now?", initialValue: false });
+      if (install === true) {
+        for (const s of DESIGN_SKILLS) {
+          out.write(`\n  ${paint("→", BLUE, caps)} ${s.name}\n`);
+          const r = spawnSync(s.command, { cwd: root, shell: true, stdio: "inherit" });
+          if (r.status !== 0) out.write(`  ${paint("!", AMBER, caps)} ${s.name} failed (exit ${r.status})\n`);
+        }
+      }
+    }
+  }
+  out.write("\n");
+}
+
+export async function main(argv: string[]): Promise<number> {
+  let opts;
+  try {
+    opts = parseCli(argv);
+  } catch (e) {
+    process.stderr.write(`${(e as Error).message}\n\n${HELP(pkg.version)}`);
+    return 2;
+  }
+  if (opts.help) {
+    out.write(HELP(pkg.version));
+    return 0;
+  }
+  if (opts.version) {
+    out.write(`${pkg.version}\n`);
+    return 0;
+  }
+
+  const caps = detectCaps({ env: process.env, isTTY: out.isTTY, columns: out.columns, noMotion: opts.noMotion });
+  if (caps.motion) installCursorGuard(out);
+
+  const root = await resolveRoot(opts.dir);
+  const facts = await scanWithRail(root, caps);
+
+  const saved = await loadSaved(root);
+  const claude = findClaude();
+  const interactive = !opts.yes && !!process.stdin.isTTY;
+  out.write("\n");
+  const answers = interactive
+    ? await askAnswers(facts, saved, { claudeAvailable: !!claude, enrich: opts.enrich })
+    : defaultAnswers(facts, saved, { enrich: opts.enrich === true && !!claude });
+
+  const templates = loadTemplates();
+  const plans = planFiles({ facts, answers, templates, version: pkg.version });
+  let results = await applyPlan(root, plans, { dryRun: opts.dryRun });
+
+  let enriched: string[] = [];
+  if (answers.enrich && claude) {
+    if (opts.dryRun) {
+      out.write(`\n  ${paint("◆", VIOLET, caps)} Deep analysis with Claude ${paint("skipped in --dry-run", MUTED, caps)}\n`);
+    } else if (answers.generate.includes("context")) {
+      enriched = await enrichWithTicker(root, facts, claude, caps);
+      if (enriched.length) {
+        // Re-render only the context SKILL.md so its index lists the new files.
+        const skillPath = `.claude/skills/${facts.slug}-context/SKILL.md`;
+        const again = planFiles({ facts, answers, templates, version: pkg.version, enriched }).filter((f) => f.path === skillPath);
+        const [updated] = await applyPlan(root, again, { dryRun: false });
+        if (updated) results = results.map((r) => (r.path === skillPath && r.action === "new" ? r : r.path === skillPath ? updated : r));
+      }
+    }
+  }
+
+  await report(root, facts, answers, results, enriched, { dryRun: opts.dryRun, interactive }, caps);
+  return 0;
+}
+
+main(process.argv.slice(2)).then(
+  (code) => process.exit(code),
+  (err) => {
+    process.stderr.write(`agent-kickoff: ${err instanceof Error ? err.message : String(err)}\n`);
+    process.exit(1);
+  },
+);

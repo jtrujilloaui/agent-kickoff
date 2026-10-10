@@ -1,0 +1,6 @@
+[project]
+name = "inventory"
+dependencies = ["fastapi>=0.115"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
